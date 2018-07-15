@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html ng-app="gravitationApp">
+<head>
+    <title>Gravitation</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <script src="js\angular.min.js"></script>
+    <script src="js\three.min.js"></script>
+    <script src="js\OrbitControls.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0;
+        }
+
+        #menu {
+            top: 10px;
+            right: 10px;
+        }
+
+        #bodies-list {
+            bottom: 10px;
+            right: 10px;
+        }
+
+        .gui {
+            padding: 10px;
+            position: absolute;
+            color: white;
+            opacity: 0.2;
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        .gui:hover {
+            opacity: 1;
+            transition: none;
+        }
+
+        .row {
+            margin-bottom: 10px;
+        }
+
+        .vector input {
+            width: 50px;
+        }
+
+        td {
+            padding: 5px;
+            width: 10%;
+            height: 25px;
+        }
+
+        tbody tr:hover {
+            background-color: gray;
+            cursor: pointer;
+        }
+        #table-wrapper {
+          position:relative;
+        }
+        #table-scroll {
+          height:200px;
+          overflow:auto;  
+          margin-top:20px;
+        }
+        #table-wrapper table {
+          width:100%;
+
+        }
+        #table-wrapper table * {
+/*           background:yellow;
+          color:black; */
+        }
+        #table-wrapper table thead th .text {
+          position:absolute;   
+          top:-20px;
+/*           z-index:2; */
+          text-align: center;
+          height:30px;
+/*           width:100%; */
+/*           border:1px solid red; */
+        }
+    </style>
+</head>
+<body ng-controller="MainController as main">
+
+  
+<script type="text/javascript">
+    angular.module('gravitationApp', [])
+        .controller('MainController', function ($scope) {
+            let main = this;
+            let scene, camera, renderer, controls;
+            main.availableSpeeds = [{physLoop: 1,  stepSize: 1/365/30/24/60, name: "minutes per second"},
+                                    {physLoop: 60, stepSize: 1/365/30/24/60, name: "hours per second"},
+                                    {physLoop: 24, stepSize: 1/365/30/24,    name: "days per second"},
+                                    {physLoop: 7,  stepSize: 1/365/30,       name: "weeks per second"},
+                                    {physLoop: 30, stepSize: 1/365/30,       name: "months per second"},
+                                    {physLoop: 52, stepSize: 7/365/30,       name: "years per second"}];
+      //control variables
+            main.bodiesListShown = false;
+            let mouse = new THREE.Vector2();
+      //time control variables
+            let startCounter = new Date().getTime();
+            let frmTime = startCounter;
+            let phsStart = startCounter;
+            let phsTime = startCounter;
+            let phsTicksPerSecond = 30;
+            let phsCycle = 1000/phsTicksPerSecond;
+            let frmCounter = 0;
+            let trajLength = 100;//just array length, calculating real time too complicated
+            let trajUpdateCounter = 0;
+            let trajUpdateFreq = 1; // phys Ticks
+
+      // creation plane
+            let plgeometry = new THREE.PlaneGeometry(100000, 100000);
+            let plmaterial = new THREE.MeshBasicMaterial({color: 0xffff00, side: THREE.DoubleSide});
+            let planeZ = new THREE.Mesh(plgeometry, plmaterial);
+      
+      //axis
+            let axisHelper = new THREE.AxesHelper(500);
+            axisHelper.name = "AxisHelper";
+
+            this.toggleAxes = function () {
+                if (main.showAxes)
+                    scene.add(axisHelper);
+                else
+                    scene.remove(axisHelper);
+            };
+            
+            let gridHelper = new THREE.PolarGridHelper(5000, 50, 10, 50);
+            gridHelper.rotation.x = Math.PI / 2;
+            gridHelper.name = "PolarGrid";
+
+            // Show / Hide Ecliptic Plane
+            main.toggleGrid = function () {
+                if (main.showGrid)
+                    scene.add(gridHelper);
+                else
+                    scene.remove(gridHelper);
+            };
+      
+                
+           
+            
+            main.resetCamera = function () {
+                controls.reset();
+            };
+     
+
+            // function createEarthMaterial(){
+            //     material = new THREE.MeshPhongMaterial();
+            //     material.map = THREE.ImageUtils.loadTexture('img/earthmap1k.jpg');
+            //     return material;
+            // }
+
+                let point_size = 128;
+            function generateSprite() {
+
+                var canvas = document.createElement('canvas');
+                canvas.width = point_size;
+                canvas.height = point_size;
+
+                var context = canvas.getContext('2d');
+                var gradient = context.createRadialGradient(canvas.width / 2, canvas.height / 2, 0, canvas.width / 2, canvas.height / 2, canvas.width / 2);
+                gradient.addColorStop(0, 'rgba(255,255,255,1)');
+                gradient.addColorStop(0.2, 'rgba(0,255,255,1)');
+                gradient.addColorStop(0.4, 'rgba(0,0,64,1)');
+                gradient.addColorStop(1, 'rgba(0,0,0,1)');
+
+                context.fillStyle = gradient;
+                context.fillRect(0, 0, canvas.width, canvas.height);
+
+                var texture = new THREE.Texture(canvas);
+                texture.needsUpdate = true;
+                return texture;
+
+            }
+
+            let sceen_factor = 20;
+            function transformInScreenCoord(pos) {
+              return {x: pos.x * sceen_factor, y: pos.y * sceen_factor, z: pos.z * sceen_factor};
+            }
+
+            init();
+            animate();
+
+            function init() {
+              main.bodies = [];
+
+                scene = new THREE.Scene();
+                camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.001, 100000);
+                camera.position.set(0, 0, 1150);
+                
+                camera.up.set( 0, 0, 0 );
+                // camera.lookAt(100, 100, 100);
+                // for (let i in main.bodies) {
+                //     addToScene(main.bodies[i])
+                // }
+
+                //Lights
+                // let light1 = new THREE.PointLight(0xffaaaa, 2, 0, 0);
+
+                // light1.position.set(0, 0, 0);
+                // light1.color.setHSL( 0.55, 0.9, 0.5 );
+                // scene.add(light1);
+
+                // let light2 = new THREE.AmbientLight(0x333333);
+                // scene.add(light2);
+
+                renderer = new THREE.WebGLRenderer({antialias: true});
+                // renderer.setClearColor(new THREE.Color(0x000000, 1.0));
+                // renderer.shadowMap.enabled = true;
+                // scene.background = new THREE.Color( 0x000000 );
+
+                renderer.setSize(window.innerWidth, window.innerHeight);
+
+                document.body.appendChild(renderer.domElement);
+
+                //Ich wuerde unsere eigene Control Funktion schreiben. Das ist unhandlich
+                controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 1;
+                // controls.enableZoom = true;
+
+                connect();
+
+            }
+
+            function animate(apply) {
+                requestAnimationFrame(animate);
+                              //fps counter
+                frmTime = new Date().getTime();
+                phsTime = frmTime;
+                if (frmTime - startCounter >= 1000){
+                  startCounter = new Date().getTime();
+                  $scope.$apply();
+                  $scope.frameRate = frmCounter;
+                  frmCounter = 0;
+                }else{
+                  frmCounter++;
+                }
+
+                // console.log(main.bodies[0].position)                
+                // if(phsTime - phsStart>= phsCycle && !pauseSim){
+                //   phsStart = new Date().getTime();
+                //   physicsTick();
+                // }
+
+
+              
+                // distantObjectIndication();
+
+                renderer.render(scene, camera);
+            }
+
+
+            let particleSystem;
+            let particles = new THREE.Geometry();
+            let material = new THREE.PointCloudMaterial({
+                color: "#FFF",//body.color,
+                size: point_size,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                map: generateSprite(),
+                depthWrite: false, depthTest: false
+            });
+
+            function connect(){
+              var url = new URL(window.location.href);
+              // if(url.searchParams.get('imgip'))
+              //     ip = url.searchParams.get('imgip');
+              // else
+              //     alert('append imgip to address')
+              var ip = 'localhost'
+              let isInitialized = false;
+
+              console.log('connecting to '+ip);
+              try {
+                  let ws = new WebSocket('ws://'+ip+':8778');
+                  ws.onmessage = function(msg){
+                    let pos = msg.data.split(',');
+                    for(let i=0; i< pos.length/3; i++){
+                      let offset = i*3;
+  
+                        let b = ({position:{
+                          x: pos[offset]-31, 
+                          y: pos[offset+1]-8, 
+                          z: pos[offset+2]}});
+                        let coord = transformInScreenCoord(b.position);
+
+                      if(!isInitialized){
+                        particles.vertices.push(new THREE.Vector3(coord.x, coord.y, coord.z));
+                      }
+                      else{
+                        let particle = particles.vertices[i];
+                        particle.x = coord.x;
+                        particle.y = coord.y;
+                        particle.z = coord.z;
+                      }
+                    }
+                    // console.log(main.bodies[0].mesh.position);
+                    
+                    if(!isInitialized){
+                        particleSystem = new THREE.Points(
+                        particles,
+                        material);
+                        particleSystem.sortParticles = true;
+                        
+                        scene.add(particleSystem);
+                        isInitialized = true;
+                        console.log('initialized')
+                    }else{
+                        particleSystem.geometry.verticesNeedUpdate = true
+                    }
+                    ws.send('next');
+                  };
+                  ws.onopen = function(){ console.log('ws connected');};
+                  ws.onclose = function(){};
+                  ws.onerror = function () {
+                      console.error('ws error')
+                  };
+              } catch (err) {
+                  console.log(err);
+              }
+            }
+          
+            window.addEventListener('resize', onWindowResize, false);
+
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+           
+
+        });
+</script>
+</body>
+</html>
